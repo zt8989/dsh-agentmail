@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Agent 邮箱",
+    "description": "通过 QQ Agent 邮箱（agently-cli）收发邮件；发出的邮件携带 session/thread 标记，回信可自动路由到对应的会话。"
+  }
+}

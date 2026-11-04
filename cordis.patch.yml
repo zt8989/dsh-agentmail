@@ -1,0 +1,6 @@
+# Mounts the Agent Mail host plugin: tools for sending/receiving mail through the
+# QQ Agent mailbox (agently-cli), a poller that routes replies back to the right
+# DSH Session by the session/thread markers embedded in the subject line.
+- insert:
+    - id: agentmail
+      name: dsh-agentmail

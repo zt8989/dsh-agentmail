@@ -1,17 +1,5 @@
 # dsh-agentmail — Agent Mail for DeepSeek Harness
 
-> **项目备注 / Project Note**
->
-> **简介**：DeepSeek Harness 的 Agent 邮箱插件。让 Agent 通过 QQ Agent Mail（`agently-cli`）收发邮件，并利用邮件标题中的 `session`/`thread` 标记，把回信**自动路由回发起对话的那个 DSH 会话**。
->
-> **核心能力**：6 个工具（send / list / read / search / reply / poll）+ 可配置的后台轮询；本插件为 Host-only，无需前端界面。
->
-> **使用前提**：已安装并授权 `agently-cli`（`npm i -g @tencent-qqmail/agently-cli` → `agently-cli auth login`）。
->
-> **已修复**：① 子进程输出改为「等进程退出后再读取」，修复发送结果读空的问题；② 增加**自发回声防护**，自发信（发件人=本邮箱）不再被重复注入会话。
->
-> **待办（TODO）**：附件收发支持；发件人白名单与轮询异常重试；README 增加截图与多语言说明。
-
 A DeepSeek Harness **host plugin** that lets an agent send and receive email
 through the QQ **Agent Mail** mailbox (via [`agently-cli`](https://agent.qq.com/doc/cli-setup.md)),
 and routes incoming replies **back into the DSH Session that owns the thread**.

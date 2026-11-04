@@ -114,11 +114,12 @@ function createCli(ctx, config) {
       })
       const timer = setTimeout(() => { try { handle.terminate() } catch {} }, timeoutMs)
       try {
-        const [outcome, out, err] = await Promise.all([
-          handle.done,
-          readReader(handle.collected?.stdout),
-          readReader(handle.collected?.stderr),
-        ])
+        // Wait for the process to exit FIRST, then read the collected buffers:
+        // reading concurrently with `done` can observe a partial/empty spool.
+        const outcome = await handle.done
+        // Give the collector a beat to publish the final chunk.
+        const out = await readReaderComplete(handle.collected?.stdout)
+        const err = await readReaderComplete(handle.collected?.stderr)
         return { exitCode: outcome.exitCode, stdout: out, stderr: err }
       } finally {
         clearTimeout(timer)
@@ -178,6 +179,27 @@ async function readReader(reader) {
   } catch {
     return ''
   }
+}
+
+/**
+ * Read a collect-mode reader to the end after the process has exited. The
+ * reader is offset based and non-consuming, so we loop readFrom(cursor) until
+ * we have a non-lossy tail (or run out of patience).
+ */
+async function readReaderComplete(reader, { attempts = 5, delayMs = 20 } = {}) {
+  if (!reader) return ''
+  let last = ''
+  for (let i = 0; i < attempts; i += 1) {
+    let r
+    try { r = reader.readFrom(0) } catch { break }
+    if (r && typeof r.text === 'string') {
+      last = r.text
+      // Non-lossy means the configured maxBytes was not hit; we have it all.
+      if (r.lossy === false) return last
+    }
+    await new Promise((res) => setTimeout(res, delayMs))
+  }
+  return last
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +421,12 @@ export function apply(ctx, rawConfig = {}) {
     const from = message.from?.email || message.from?.name || ''
     if (config.routeOnlyFrom.length > 0 && !config.routeOnlyFrom.includes(from)) return { routed: false, reason: 'sender filtered' }
     if (!marker) return { routed: false, reason: 'no marker' }
+    // Echo guard: our own outgoing mail (e.g. sending to yourself) can loop back as
+    // incoming and would otherwise re-inject into the same Session. Skip it.
+    const selfAddr = await self()
+    if (selfAddr && from && from.toLowerCase() === String(selfAddr).toLowerCase()) {
+      return { routed: false, reason: 'from self (echo)' }
+    }
 
     const { session: sessionKey, thread } = marker
     const binding = store.bindingOf(sessionKey, thread)

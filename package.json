@@ -31,7 +31,8 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "README.zh-CN.md"
   ],
   "scripts": {
     "build": "esbuild index.js --bundle --format=esm --platform=node --outfile=dist/index.js --external:@deepseek-ai/cordis --external:@deepseek-ai/dsh-llm --external:@deepseek-ai/dsh-tools",

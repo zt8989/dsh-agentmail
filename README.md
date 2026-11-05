@@ -1,5 +1,7 @@
 # dsh-agentmail — Agent Mail for DeepSeek Harness
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 A DeepSeek Harness **host plugin** that lets an agent send and receive email
 through the QQ **Agent Mail** mailbox (via [`agently-cli`](https://agent.qq.com/doc/cli-setup.md)),
 and routes incoming replies **back into the DSH Session that owns the thread**.
@@ -25,6 +27,11 @@ and routes incoming replies **back into the DSH Session that owns the thread**.
   shells become `>` quotes, tiny icon/tracking pixels drop out, other images
   become `[图片]` placeholders, tables render as pipe tables. PLAIN and MARKDOWN
   bodies pass through untouched.
+
+- **Missing-CLI hint** — when `agently-cli` cannot be executed, every tool (and the
+  poller) returns the official setup doc pointer
+  (`https://agent.qq.com/doc/cli-setup.md`) instead of a bare ENOENT, so the
+  agent can walk the user through installation.
 
 ## The session / thread marker
 
@@ -52,7 +59,15 @@ edited or the marker only survives in the snippet.
    agently-cli +me              # verify the mailbox address
    ```
 
-2. The plugin installed into the profile (via Plugin Manager / `install_bundle`).
+2. The plugin installed into a profile:
+
+   ```bash
+   dsh plugin --profile web add @zt8989/dsh-agentmail
+   ```
+
+   Any profile name works (`web` shown as an example); `--profile <name>`
+   initializes the profile on first use. If the CLI is missing, the tools
+   return the setup hint above.
 
 ## Packaging
 

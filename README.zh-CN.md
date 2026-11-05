@@ -1,0 +1,91 @@
+# dsh-agentmail — DeepSeek Harness 的 Agent Mail 插件
+
+[English](README.md) | 简体中文
+
+一个 DeepSeek Harness **主机插件**：让智能体通过 QQ **Agent Mail** 邮箱（基于
+[`agently-cli`](https://agent.qq.com/doc/cli-setup.md)）收发邮件，并把来信**路由回
+拥有该线程的 DSH 会话**。
+
+## 功能
+
+- **智能体工具**：
+  - `agentmail_send` — 发送邮件；主题自动嵌入 `session`/`thread` 标记。
+  - `agentmail_list` — 列出某个文件夹（inbox/sent/trash/spam）。
+  - `agentmail_read` — 读取完整邮件；HTML 正文渲染为干净的 Markdown。
+  - `agentmail_search` — 按关键词搜索。
+  - `agentmail_reply` — 回复邮件（保留标记）。
+  - `agentmail_poll` — 立即检查收件箱并路由新邮件。
+- **轮询器** — 每隔 `pollIntervalMs` 列出收件箱未读邮件，逐封读取新邮件、解析标记，
+  并通过 `agent.followup(...)` 把内容投递进绑定的 DSH 会话（唤醒智能体）。开启
+  `autoCreateSession` 时，没有绑定的线程会新建一个会话。
+- **HTML → Markdown** — QQ/Foxmail 的 HTML 正文被渲染为紧凑的 Markdown
+  （`html.js`，基于 turndown）：签名/报告块（`data-xmail_bot_mail_report`）整体移除，
+  Foxmail 的 border-left/`mail_quote` 引用壳变成 `>` 引用，微小图标/追踪像素被丢弃，
+  其余图片变成 `[图片]` 占位，表格渲染为管道表格。PLAIN 与 MARKDOWN 正文原样透传。
+- **缺失 CLI 提示** — 当 `agently-cli` 无法执行时，所有工具（含轮询器）返回官方安装
+  文档指引（`https://agent.qq.com/doc/cli-setup.md`），而不是裸的 ENOENT 报错，智能体
+  可以据此引导用户完成安装。
+
+## 会话 / 线程标记
+
+发送邮件时，主题末尾会追加：
+
+```
+Subject: Quarterly report  [AM:s=<session>|t=<thread>]
+```
+
+- `s` — 会话归属：DSH 会话 id（或你指定的稳定 key）。
+- `t` — 智能体为本轮对话选择的**线程**（主题）。
+
+回复会保留标记（邮件客户端在主题里保留 `Re: …`），因此轮询器能把
+`(session, thread)` 解析回同一个 DSH 会话。映射表持久化在 `state.json`，
+即使主题被编辑、标记只存活在摘要里，重启后路由依然有效。
+
+## 前提条件
+
+1. 安装并授权 `agently-cli`（一次即可）：
+
+   ```bash
+   npm install -g @tencent-qqmail/agently-cli
+   agently-cli auth login        # 交互式 OAuth 授权
+   agently-cli +me              # 验证邮箱地址
+   ```
+
+2. 把插件安装进某个 profile：
+
+   ```bash
+   dsh plugin --profile web add @zt8989/dsh-agentmail
+   ```
+
+   任意 profile 名均可（这里以 `web` 为例）；`--profile <name>` 在首次使用时自动
+   初始化。如果 CLI 缺失，工具会返回上面的安装提示。
+
+## 打包
+
+发布的包是一个**自包含的单文件 bundle**（`dist/index.js`）：turndown
+（HTML→Markdown）在 `prepublishOnly` 阶段经 esbuild 内联，因此运行时**零依赖**。
+bundle 在运行时导入 DSH 宿主包（`@deepseek-ai/cordis`、`@deepseek-ai/dsh-llm`、
+`@deepseek-ai/dsh-tools`）；它们**有意不声明为 peerDependencies**——从宿主自身的
+安装里解析（registry 上的同名包并不相干），声明它们会导致 npm arborist 崩溃。
+源码在 `index.js` + `html.js`；`npm run build` 重新生成 bundle。
+
+## 配置（`cordis.patch.yml`）
+
+覆盖 `agentmail` 行的 config 即可调整行为：
+
+```yaml
+- id: agentmail
+  config:
+    cliPath: agently-cli        # 不在 PATH 上时用绝对路径
+    pollIntervalMs: 60000       # 0 关闭后台轮询
+    routeOnlyFrom: []           # 例如 ["boss@example.com"] 只自动路由这些发件人
+    autoCreateSession: true     # 为未见过的线程创建 DSH 会话
+    workspaceId: ""             # 自动创建会话时使用的 workspace
+    statePath: ""               # 默认 <DSH_HOME>/agentmail/state.json
+    markRead: true              # 已路由的邮件移入废件箱
+```
+
+## 说明
+
+- 发送/回复使用 `--confirmed`，不会被交互式确认提示卡住。
+- 附件可直接用 CLI 发送；本插件聚焦会话/线程路由工作流。

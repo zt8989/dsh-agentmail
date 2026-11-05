@@ -2,9 +2,11 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-A DeepSeek Harness **host plugin** that lets an agent send and receive email
-through the QQ **Agent Mail** mailbox (via [`agently-cli`](https://agent.qq.com/doc/cli-setup.md)),
-and routes incoming replies **back into the DSH Session that owns the thread**.
+A DeepSeek Harness **plugin** that lets an agent send and receive email through
+the QQ **Agent Mail** mailbox (via [`agently-cli`](https://agent.qq.com/doc/cli-setup.md)),
+routes incoming replies **back into the DSH Session that owns the thread**, and
+hands mail for **unknown conversations** to a fallback Session (or ignores it).
+Its settings are edited on a configuration page in the Web UI.
 
 ## What it does
 
@@ -19,8 +21,13 @@ and routes incoming replies **back into the DSH Session that owns the thread**.
   - `agentmail_poll` — check the inbox now and route new mail.
 - **Poller** — every `pollIntervalMs` it lists unread inbox mail, reads each new
   message, parses the marker, and delivers it into the bound DSH Session with
-  `agent.followup(...)` (waking the agent). A thread with no binding gets a new
-  Session when `autoCreateSession` is on.
+  `agent.followup(...)` (waking the agent). A conversation that matches no live
+  Session goes to the configured **fallback Session**; with no fallback the mail
+  stays in the inbox and is ignored.
+- **Configuration page** — the plugin row on **Plugins → Agent Mail** gains a
+  **Configure** control that opens a settings page (fallback Session, sender
+  filter, delivery, polling, connection). Edits are staged and written on
+  **Save**, so no manual `cordis.patch.yml` editing is needed for normal use.
 - **HTML -> markdown** — QQ/Foxmail HTML bodies are rendered down to compact
   markdown (`html.js`, turndown-based): signature/report blocks
   (`data-xmail_bot_mail_report`) are removed, Foxmail's border-left/`mail_quote`
@@ -80,21 +87,27 @@ resolved from the host's own install (the registry copies are unrelated) and
 declaring them crashes npm's arborist. Sources live in `index.js` + `html.js`;
 `npm run build` regenerates the bundle.
 
-## Configuration (`cordis.patch.yml`)
+## Configuration
 
-Override the `agentmail` row's config to tune behaviour:
+Open **Plugins** in the sidebar, select `@zt8989/dsh-agentmail`, and use
+**Configure** on the `agentmail` row. The page writes the profile's
+`cordis.patch.yml` for you; the same values can be set there by hand:
 
 ```yaml
 - id: agentmail
   config:
-    cliPath: agently-cli        # absolute path if not on PATH
-    pollIntervalMs: 60000       # 0 disables the background poller
-    routeOnlyFrom: []           # e.g. ["boss@example.com"] to only auto-route those
-    autoCreateSession: true     # create a DSH Session for unseen threads
-    workspaceId: ""             # workspace for auto-created Sessions
-    statePath: ""               # default <DSH_HOME>/agentmail/state.json
-    markRead: true              # move routed mail to trash
+    fallbackSessionId: "session-…"  # session for unknown conversations; "" = ignore
+    pollIntervalMs: 60000           # 0 disables the background poller
+    routeOnlyFrom: []               # e.g. ["boss@example.com"] to only auto-route those
+    cliPath: agently-cli            # absolute path if not on PATH
+    statePath: ""                   # default <DSH_HOME>/agentmail/state.json
+    markRead: true                  # move routed mail out of the inbox
 ```
+
+The fallback Session id is the same id the Session menu copies. Mail that reaches
+the fallback is marked as an unknown conversation in the delivered text, and it
+does not create a thread binding: if that Session later comes back, its own
+threads route to it again.
 
 ## Notes
 

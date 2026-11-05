@@ -38,10 +38,8 @@ export const Config = z.object({
   pollIntervalMs: z.number().min(0).default(60000).description('Poll the inbox every N milliseconds. 0 disables polling.'),
   // Only route mail from these senders, when non-empty.
   routeOnlyFrom: z.array(z.string()).default([]).description('If set, only mail from these sender emails is auto-routed.'),
-  // Create a fresh DSH Session for a thread with no existing binding.
-  autoCreateSession: z.boolean().default(true).description('Create a new DSH Session when an incoming thread has no bound Session.'),
-  // Workspace id used for auto-created Sessions (empty = the default).
-  workspaceId: z.string().default('').description('Workspace id for sessions created by the poller (empty = default workspace).'),
+  // Mail that belongs to no live Session goes here; empty drops it.
+  fallbackSessionId: z.string().default('').description('Session id that receives mail for unknown conversations. Empty ignores such mail.'),
   // Where the binding state is stored; empty = <DSH_HOME>/agentmail/state.json.
   statePath: z.string().default('').description('Override the state file path.'),
   // Move routed messages out of the inbox so they are not routed again.
@@ -450,7 +448,6 @@ export function apply(ctx, rawConfig = {}) {
     const marker = parseMarker(subject) || parseMarker(message.snippet)
     const from = message.from?.email || message.from?.name || ''
     if (config.routeOnlyFrom.length > 0 && !config.routeOnlyFrom.includes(from)) return { routed: false, reason: 'sender filtered' }
-    if (!marker) return { routed: false, reason: 'no marker' }
     // Echo guard: our own outgoing mail (e.g. sending to yourself) can loop back as
     // incoming and would otherwise re-inject into the same Session. Skip it.
     const selfAddr = await self()
@@ -458,43 +455,65 @@ export function apply(ctx, rawConfig = {}) {
       return { routed: false, reason: 'from self (echo)' }
     }
 
-    const { session: sessionKey, thread } = marker
-    const binding = store.bindingOf(sessionKey, thread)
-    let targetSessionId = binding?.sessionId
-
-    // Resolve the DSH Session to wake.
-    let agent
-    if (targetSessionId) {
-      agent = await resolveAgentById(targetSessionId)
-    }
-    if (!agent && looksLikeSessionId(sessionKey)) {
-      agent = await resolveAgentById(sessionKey)
-      targetSessionId = sessionKey
-    }
-    if (!agent && config.autoCreateSession) {
-      targetSessionId = await createSession()
-      agent = targetSessionId ? await resolveAgentById(targetSessionId) : undefined
-    }
-    if (!agent) return { routed: false, reason: 'no target session' }
+    const target = await resolveTarget(marker)
+    if (!target.agent) return { routed: false, reason: target.reason }
 
     // Read the full body before injecting it.
     let full
     try { full = (await cli.runJson(['message', '+read', '--id', message.message_id])).data } catch { full = undefined }
     const bodyText = bodyToText(full?.body || message.snippet || '', full?.body_format)
 
-    const header = `[Agent Mail · thread "${thread}" · from ${from}]`
-    const text = `${header}\nSubject: ${normalizeSubject(subject)}\n\n${bodyText}`
     const userMessage = createUserMessage({
-      content: [{ type: 'text', text }],
+      content: [{ type: 'text', text: deliveryText(target, { subject, from, bodyText, marker }) }],
       // User-role message so the Session log accepts it like a chat message.
       source: { kind: 'user' },
     })
+    const agent = target.agent
     if (typeof agent.followup === 'function') agent.followup(userMessage)
     else if (typeof agent.steer === 'function') agent.steer(userMessage)
     try { await ctx.get?.('sessions')?.flush?.(agent.session) } catch { /* flush optional */ }
 
-    store.setBinding(sessionKey, thread, { session: sessionKey, thread, sessionId: targetSessionId, updatedAt: Date.now(), lastDirection: 'in' })
-    return { routed: true, sessionId: targetSessionId, thread }
+    // Only a thread that resolved to its own Session becomes a binding; fallback
+    // deliveries stay one-off so a revived Session reclaims its thread.
+    if (target.source !== 'fallback' && marker) {
+      store.setBinding(marker.session, marker.thread, { session: marker.session, thread: marker.thread, sessionId: target.sessionId, updatedAt: Date.now(), lastDirection: 'in' })
+    }
+    return { routed: true, sessionId: target.sessionId, thread: marker?.thread, via: target.source }
+  }
+
+  /**
+   * Pick the Session that receives one message: its bound Session, the Session
+   * named by the marker, or the configured fallback for unknown conversations.
+   * With no fallback the message is deliberately dropped.
+   */
+  async function resolveTarget(marker) {
+    if (marker) {
+      const binding = store.bindingOf(marker.session, marker.thread)
+      if (binding?.sessionId) {
+        const agent = await resolveAgentById(binding.sessionId)
+        if (agent) return { agent, sessionId: binding.sessionId, source: 'binding' }
+      }
+      if (looksLikeSessionId(marker.session)) {
+        const agent = await resolveAgentById(marker.session)
+        if (agent) return { agent, sessionId: marker.session, source: 'marker' }
+      }
+    }
+    const fallbackId = String(config.fallbackSessionId || '').trim()
+    if (!fallbackId) {
+      return { reason: marker ? 'unknown conversation (no fallback session)' : 'unmarked mail (no fallback session)' }
+    }
+    const agent = await resolveAgentById(fallbackId)
+    if (!agent) return { reason: `fallback session ${fallbackId} is not available` }
+    return { agent, sessionId: fallbackId, source: 'fallback' }
+  }
+
+  function deliveryText(target, { subject, from, bodyText, marker }) {
+    const head = target.source === 'fallback'
+      ? [`[Agent Mail · unknown conversation · from ${from}]`]
+      : [`[Agent Mail · thread "${marker?.thread ?? ''}" · from ${from}]`]
+    if (target.source === 'fallback' && marker) head.push(`Marker: session=${marker.session} thread=${marker.thread} (no live Session)`)
+    head.push(`Subject: ${normalizeSubject(subject)}`)
+    return `${head.join('\n')}\n\n${bodyText}`
   }
 
   async function resolveAgentById(sessionId) {
@@ -511,20 +530,6 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
-  async function createSession() {
-    const sc = ctx.get?.('sessionController')
-    if (!sc) return undefined
-    try {
-      const req = {}
-      if (config.workspaceId) req.workspaceId = config.workspaceId
-      const res = await sc.create(req)
-      return res?.sessionId
-    } catch (e) {
-      log('create session failed:', e?.message || e)
-      return undefined
-    }
-  }
-
   async function pollOnce() {
     await ready
     const j = await cli.runJson(['message', '+list', '--dir', 'inbox', '--is-unread', '--limit', '20'])
@@ -534,7 +539,9 @@ export function apply(ctx, rawConfig = {}) {
       if (!msg?.message_id || store.hasSeen(msg.message_id)) continue
       try {
         const r = await routeIncoming(msg)
-        store.markSeen(msg.message_id)
+        // An ignored message stays unseen on purpose: configuring a fallback
+        // Session later lets the next poll pick it up.
+        if (r.routed || r.reason === 'from self (echo)') store.markSeen(msg.message_id)
         results.push({ id: msg.message_id, ...r })
         if (r.routed && config.markRead) {
           // Move out of the inbox so it is not listed as unread again.
@@ -556,7 +563,7 @@ export function apply(ctx, rawConfig = {}) {
       const results = await pollOnce()
       if (results.length === 0) return 'No new mail to route.'
       return results.map((r) => r.routed
-        ? `routed ${r.id} -> session ${r.sessionId} (thread ${r.thread})`
+        ? `routed ${r.id} -> session ${r.sessionId}${r.via === 'fallback' ? ' (fallback for an unknown conversation)' : ''}${r.thread ? ` (thread ${r.thread})` : ''}`
         : `skipped ${r.id}: ${r.reason}`).join('\n')
     },
   })))
@@ -583,11 +590,12 @@ export function apply(ctx, rawConfig = {}) {
     ctx.effect(() => sp.section({
       name: 'tool:agentmail',
       order: 120,
-      text: 'You can send and receive email through Agent Mail (agentmail_send / agentmail_list / agentmail_read / agentmail_search / agentmail_reply / agentmail_poll). When you send mail, a session/thread marker is embedded in the subject and replies are routed back into the conversation automatically; keep the resulting thread name stable for a topic.',
+      text: 'You can send and receive email through Agent Mail (agentmail_send / agentmail_list / agentmail_read / agentmail_search / agentmail_reply / agentmail_poll). When you send mail, a session/thread marker is embedded in the subject and replies are routed back into the conversation automatically; keep the resulting thread name stable for a topic. Mail whose conversation matches no live Session goes to the configured fallback Session, and is ignored when no fallback is configured.',
     }))
   }
 
-  log('Agent Mail ready (poll every', intervalMs ? `${Math.round(intervalMs / 1000)}s` : 'never', ')')
+  log('Agent Mail ready (poll every', intervalMs ? `${Math.round(intervalMs / 1000)}s` : 'never',
+    config.fallbackSessionId ? `, fallback ${config.fallbackSessionId}` : ', unknown mail ignored', ')')
   return { pollOnce }
 }
 
@@ -600,8 +608,7 @@ const CONFIG_DEFAULTS = {
   launcher: [],
   pollIntervalMs: 60000,
   routeOnlyFrom: [],
-  autoCreateSession: true,
-  workspaceId: '',
+  fallbackSessionId: '',
   statePath: '',
   markRead: true,
 }

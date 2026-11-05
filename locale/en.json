@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Agent Mail",
-    "description": "Send and receive email through the QQ Agent mailbox (agently-cli); sent mail carries session/thread markers so replies are routed back to the right Session automatically."
+    "description": "Send and receive email through the QQ Agent mailbox (agently-cli); sent mail carries session/thread markers so replies are routed back to the right Session, and unknown conversations go to a fallback Session or are ignored."
   }
 }

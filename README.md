@@ -54,6 +54,15 @@ edited or the marker only survives in the snippet.
 
 2. The plugin installed into the profile (via Plugin Manager / `install_bundle`).
 
+## Packaging
+
+The published package ships a **single self-contained bundle** (`dist/index.js`):
+turndown (HTML->markdown) is inlined via esbuild at `prepublishOnly` time, so
+the package has **no runtime dependencies**. Only the DSH host packages remain
+as peer imports (`@deepseek-ai/cordis`, `@deepseek-ai/dsh-llm`,
+`@deepseek-ai/dsh-tools`) and are provided by the harness. Sources live in
+`index.js` + `html.js`; `npm run build` regenerates the bundle.
+
 ## Configuration (`cordis.patch.yml`)
 
 Override the `agentmail` row's config to tune behaviour:

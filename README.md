@@ -10,7 +10,8 @@ and routes incoming replies **back into the DSH Session that owns the thread**.
   - `agentmail_send` — send an email; a `session`/`thread` marker is embedded in
     the subject automatically.
   - `agentmail_list` — list a folder (inbox/sent/trash/spam).
-  - `agentmail_read` — read one message in full.
+  - `agentmail_read` — read one message in full; HTML bodies are rendered to
+    clean markdown.
   - `agentmail_search` — search by keyword.
   - `agentmail_reply` — reply to a message (marker preserved).
   - `agentmail_poll` — check the inbox now and route new mail.
@@ -18,6 +19,12 @@ and routes incoming replies **back into the DSH Session that owns the thread**.
   message, parses the marker, and delivers it into the bound DSH Session with
   `agent.followup(...)` (waking the agent). A thread with no binding gets a new
   Session when `autoCreateSession` is on.
+- **HTML -> markdown** — QQ/Foxmail HTML bodies are rendered down to compact
+  markdown (`html.js`, turndown-based): signature/report blocks
+  (`data-xmail_bot_mail_report`) are removed, Foxmail's border-left/`mail_quote`
+  shells become `>` quotes, tiny icon/tracking pixels drop out, other images
+  become `[图片]` placeholders, tables render as pipe tables. PLAIN and MARKDOWN
+  bodies pass through untouched.
 
 ## The session / thread marker
 

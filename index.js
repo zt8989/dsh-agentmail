@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
+import { bodyToText } from './html.js'
 
 export const name = 'dsh-agentmail'
 // tools: register mail tools. Every other service (subprocess, sessions,
@@ -371,12 +372,11 @@ export function apply(ctx, rawConfig = {}) {
         `To: ${(d.to || []).map((x) => x.email || x.name).join(', ')}`,
         `Subject: ${d.subject || ''}`,
         `Date: ${d.created_at || ''}`,
-        `Body-format: ${d.body_format || ''}`,
+        `Body-format: ${d.body_format || ''}${/^html$/i.test(String(d.body_format || '')) ? ' (rendered to markdown)' : ''}`,
         marker ? `Marker: session=${marker.session} thread=${marker.thread}` : 'Marker: none',
         (d.attachments || []).length ? `Attachments: ${d.attachments.map((a) => `${a.filename} (${a.size}B)`).join(', ')}` : '',
       ].filter(Boolean).join('\n')
-      const body = trimBody(d.body || '')
-      return `${head}\n\n${body}`
+      return `${head}\n\n${bodyToText(d.body, d.body_format)}`
     },
   })))
 
@@ -450,7 +450,7 @@ export function apply(ctx, rawConfig = {}) {
     // Read the full body before injecting it.
     let full
     try { full = (await cli.runJson(['message', '+read', '--id', message.message_id])).data } catch { full = undefined }
-    const bodyText = trimBody(full?.body || message.snippet || '')
+    const bodyText = bodyToText(full?.body || message.snippet || '', full?.body_format)
 
     const header = `[Agent Mail · thread "${thread}" · from ${from}]`
     const text = `${header}\nSubject: ${normalizeSubject(subject)}\n\n${bodyText}`
@@ -592,10 +592,4 @@ function fmtTime(iso) {
   if (Number.isNaN(d.getTime())) return String(iso).slice(0, 16)
   const p = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
-}
-
-function trimBody(body) {
-  const text = String(body || '')
-  if (text.length <= 12000) return text
-  return `${text.slice(0, 12000)}\n\n…[truncated ${text.length - 12000} chars]`
 }

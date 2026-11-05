@@ -1,6 +1,6 @@
 {
   "name": "@zt8989/dsh-agentmail",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"
@@ -24,11 +24,15 @@
   },
   "files": [
     "index.js",
+    "html.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
     "README.md"
   ],
+  "dependencies": {
+    "turndown": "^7.2.0"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/dsh-llm": "*",
@@ -38,5 +42,8 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "dependencies": {
+    "turndown": "^7.2.5"
   }
 }

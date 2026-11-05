@@ -3,4 +3,4 @@
 # DSH Session by the session/thread markers embedded in the subject line.
 - insert:
     - id: agentmail
-      name: dsh-agentmail
+      name: '@zt8989/dsh-agentmail'

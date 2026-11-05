@@ -1,6 +1,10 @@
 {
-  "name": "dsh-agentmail",
-  "version": "0.1.0",
+  "name": "@zt8989/dsh-agentmail",
+  "version": "0.1.1",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "description": "Agent Mail for DeepSeek Harness: send and receive email through the agently-cli QQ Agent mailbox, embedding session/thread markers so replies are routed back to the right DSH Session.",
   "keywords": [
     "dsh-plugin",

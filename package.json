@@ -37,11 +37,6 @@
     "esbuild": "^0.28.2",
     "turndown": "^7.2.0"
   },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "*",
-    "@deepseek-ai/dsh-llm": "*",
-    "@deepseek-ai/dsh-tools": "*"
-  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

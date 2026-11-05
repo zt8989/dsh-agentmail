@@ -58,10 +58,12 @@ edited or the marker only survives in the snippet.
 
 The published package ships a **single self-contained bundle** (`dist/index.js`):
 turndown (HTML->markdown) is inlined via esbuild at `prepublishOnly` time, so
-the package has **no runtime dependencies**. Only the DSH host packages remain
-as peer imports (`@deepseek-ai/cordis`, `@deepseek-ai/dsh-llm`,
-`@deepseek-ai/dsh-tools`) and are provided by the harness. Sources live in
-`index.js` + `html.js`; `npm run build` regenerates the bundle.
+the package has **no runtime dependencies**. The bundle imports the DSH host
+packages (`@deepseek-ai/cordis`, `@deepseek-ai/dsh-llm`, `@deepseek-ai/dsh-tools`)
+at runtime; they are **not** declared as peerDependencies on purpose — they are
+resolved from the host's own install (the registry copies are unrelated) and
+declaring them crashes npm's arborist. Sources live in `index.js` + `html.js`;
+`npm run build` regenerates the bundle.
 
 ## Configuration (`cordis.patch.yml`)
 

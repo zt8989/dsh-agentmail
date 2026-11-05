@@ -88,6 +88,21 @@ function buildMarker(session, thread) {
 // agently-cli runner
 // ---------------------------------------------------------------------------
 
+// When the CLI executable itself cannot be run, surface the setup doc instead
+// of a bare ENOENT, so the agent walks the user through installation.
+const CLI_SETUP_HINT = '请阅读 https://agent.qq.com/doc/cli-setup.md 文档，按照步骤为我安装并配置 Agent Mail CLI。'
+const MISSING_CLI_RE = /ENOENT|command not found|is not recognized|No such file or directory/i
+
+function missingCliError() {
+  return new Error(CLI_SETUP_HINT)
+}
+
+/** Translate spawn failures into the setup hint; pass everything else through. */
+function asMissingCli(e) {
+  const m = String(e?.message ?? e)
+  return (e?.code === 'ENOENT' || MISSING_CLI_RE.test(m)) ? missingCliError() : e
+}
+
 /**
  * Build a runner bound to this context. It shells out to agently-cli and parses
  * the JSON line(s) it prints to stdout. Uses ctx.subprocess when available
@@ -107,20 +122,31 @@ function createCli(ctx, config) {
     const fullArgv = [exec, ...baseArgs, ...argv]
     const subprocess = ctx.get?.('subprocess')
     if (subprocess) {
-      const handle = subprocess.spawn({
-        argv: fullArgv,
-        cwd,
-        stdio: { stdin: 'ignore', stdout: { maxBytes: 4 * 1024 * 1024 }, stderr: { maxBytes: 1024 * 1024 } },
-        graceMs: 2000,
-      })
+      let handle
+      try {
+        handle = subprocess.spawn({
+          argv: fullArgv,
+          cwd,
+          stdio: { stdin: 'ignore', stdout: { maxBytes: 4 * 1024 * 1024 }, stderr: { maxBytes: 1024 * 1024 } },
+          graceMs: 2000,
+        })
+      } catch (e) {
+        throw asMissingCli(e)
+      }
       const timer = setTimeout(() => { try { handle.terminate() } catch {} }, timeoutMs)
       try {
         // Wait for the process to exit FIRST, then read the collected buffers:
         // reading concurrently with `done` can observe a partial/empty spool.
-        const outcome = await handle.done
+        let outcome
+        try {
+          outcome = await handle.done
+        } catch (e) {
+          throw asMissingCli(e)
+        }
         // Give the collector a beat to publish the final chunk.
         const out = await readReaderComplete(handle.collected?.stdout)
         const err = await readReaderComplete(handle.collected?.stderr)
+        if (outcome.exitCode !== 0 && MISSING_CLI_RE.test(`${err}\n${out}`)) throw missingCliError()
         return { exitCode: outcome.exitCode, stdout: out, stderr: err }
       } finally {
         clearTimeout(timer)
@@ -128,16 +154,20 @@ function createCli(ctx, config) {
     }
     // Fallback: child_process (used only when subprocess is not mounted).
     const { spawn } = await import('node:child_process')
-    return await new Promise((resolvePromise) => {
+    let spawnError
+    const result = await new Promise((resolvePromise) => {
       const child = spawn(fullArgv[0], fullArgv.slice(1), { cwd, windowsHide: true })
       let stdout = ''
       let stderr = ''
       const timer = setTimeout(() => { try { child.kill() } catch {} }, timeoutMs)
       child.stdout?.on('data', (d) => { stdout += d.toString() })
       child.stderr?.on('data', (d) => { stderr += d.toString() })
+      child.on('error', (e) => { clearTimeout(timer); spawnError = e; resolvePromise({ exitCode: -1, stdout, stderr: stderr + String(e) }) })
       child.on('close', (code) => { clearTimeout(timer); resolvePromise({ exitCode: code, stdout, stderr }) })
-      child.on('error', (e) => { clearTimeout(timer); resolvePromise({ exitCode: -1, stdout, stderr: stderr + String(e) }) })
     })
+    if (spawnError) throw asMissingCli(spawnError)
+    if (result.exitCode !== 0 && MISSING_CLI_RE.test(`${result.stderr}\n${result.stdout}`)) throw missingCliError()
+    return result
   }
 
   /** Run and parse the last JSON object emitted on stdout (CLI prints one JSON). */

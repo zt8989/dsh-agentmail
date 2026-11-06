@@ -19,9 +19,11 @@ window.__ModuleLoader__.load({
       summary: 'Routes replies back to their Session; unknown conversations go to a fallback Session or are ignored.',
       routing: 'Routing',
       fallbackLabel: 'Fallback Session for unknown conversations',
-      fallbackHint: 'Mail whose conversation matches no live Session is delivered to this Session. Leave empty to ignore such mail.',
-      fallbackPlaceholder: 'Session id, e.g. session-1f0c…',
-      fallbackFind: 'Copy a Session id from the Session list menu.',
+      fallbackHint: 'Mail whose conversation matches no live Session is delivered to this Session: any Session this client lists, running or closed. Pick none to ignore such mail.',
+      fallbackNone: 'None — ignore unknown conversations',
+      fallbackMissing: '(not in this client’s Session list)',
+      fallbackCurrent: 'Session id:',
+      running: 'running',
       filterLabel: 'Only auto-route these senders',
       filterHint: 'One email address per line. Empty routes every sender.',
       filterPlaceholder: 'boss@example.com',
@@ -52,9 +54,11 @@ window.__ModuleLoader__.load({
       summary: '把回信路由回对应的会话；不认识的会话交给兜底会话，未配置则忽略。',
       routing: '路由',
       fallbackLabel: '未知会话的兜底 Session',
-      fallbackHint: '当来信的会话匹配不到任何活动会话时，投递到这个 Session。留空则忽略这类来信。',
-      fallbackPlaceholder: '会话 ID，例如 session-1f0c…',
-      fallbackFind: '可在会话列表菜单中复制会话 ID。',
+      fallbackHint: '来信的会话匹配不到任何活动会话时，投递到选中的 Session；列表里是当前客户端已知的会话，运行中的会在后面标出。选“不指定”则忽略这类来信。',
+      fallbackNone: '不指定（忽略未知会话的来信）',
+      fallbackMissing: '（不在当前会话列表中）',
+      fallbackCurrent: '会话 ID：',
+      running: '运行中',
       filterLabel: '只自动路由这些发件人',
       filterHint: '每行一个邮箱地址。留空表示不过滤。',
       filterPlaceholder: 'boss@example.com',
@@ -91,6 +95,11 @@ window.__ModuleLoader__.load({
       .amail-field__label { font-size: 13px; line-height: 20px; }
       .amail-field__hint { color: var(--dsw-alias-label-secondary); margin: 0; font-size: 12px; line-height: 18px; }
       .amail-field__error { color: var(--dsw-alias-state-error-primary); margin: 0; font-size: 12px; line-height: 18px; }
+      .amail-select { box-sizing: border-box; width: 100%; height: 36px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; padding: 0 10px; outline: none; }
+      .amail-select:focus { border-color: var(--dsw-alias-brand-primary); box-shadow: inset 0 0 0 .5px var(--dsw-alias-brand-primary); }
+      .amail-select:disabled { opacity: .6; cursor: default; }
+      .amail-field__meta { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; }
+      .amail-field__meta code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
       .amail-input, .amail-textarea { box-sizing: border-box; width: 100%; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; outline: none; padding: 0 12px; }
       .amail-input { height: 36px; }
       .amail-textarea { padding: 8px 12px; line-height: 20px; resize: vertical; min-height: 82px; }
@@ -119,6 +128,35 @@ window.__ModuleLoader__.load({
       return values !== null && typeof values === 'object' ? values[field] : undefined
     }
 
+    /**
+     * Sessions offered as the fallback target: everything this client knows,
+     * newest first, plus the configured id when the list no longer carries it.
+     * @param {object} byId session snapshot by id.
+     * @param {string} selected configured session id.
+     * @param {(key: string) => string} t translator.
+     * @returns {{ id: string, label: string }[]} select options.
+     */
+    function sessionChoices(byId, selected, t) {
+      const rows = byId !== null && typeof byId === 'object' ? Object.values(byId) : []
+      const choices = rows
+        .filter((row) => row !== null && typeof row === 'object' && typeof row.id === 'string')
+        .map((row) => ({
+          id: row.id,
+          label: row.displayTitle || row.title || row.id,
+          running: row.running === true,
+          updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : 0,
+        }))
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+      const value = String(selected || '')
+      if (value !== '' && !choices.some((choice) => choice.id === value)) {
+        choices.unshift({ id: value, label: `${value} ${t('fallbackMissing')}`, running: false })
+      }
+      return choices.map((choice) => ({
+        id: choice.id,
+        label: choice.running ? `${choice.label} · ${t('running')}` : choice.label,
+      }))
+    }
+
     /** One labeled text input bound to a namespace field. */
     function TextField(props) {
       const { id, label, hint, extraHint, placeholder, value, disabled, onChange } = props
@@ -145,6 +183,10 @@ window.__ModuleLoader__.load({
       const t = props.t
       const form = props.form
       const state = form ? form.state : undefined
+      // Optional so the page still renders where the owner passes no session hook.
+      const sessionsById = typeof props.useSessions === 'function'
+        ? props.useSessions((snapshot) => (snapshot ? snapshot.byId : undefined))
+        : undefined
       const [edits, setEdits] = React.useState({})
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState('')
@@ -179,6 +221,8 @@ window.__ModuleLoader__.load({
       const intervalRaw = current('pollIntervalMs')
       const intervalText = intervalRaw === undefined || intervalRaw === null ? '' : String(intervalRaw)
       const intervalInvalid = intervalText.trim() !== '' && !/^\d+$/.test(intervalText.trim())
+      const fallbackId = String(current('fallbackSessionId') ?? '')
+      const fallbackChoices = sessionChoices(sessionsById, fallbackId, t)
       const senders = Array.isArray(current('routeOnlyFrom')) ? current('routeOnlyFrom') : []
       const sendersText = senders.join('\n')
       const markRead = current('markRead') !== false
@@ -244,16 +288,23 @@ window.__ModuleLoader__.load({
 
           h('section', { className: 'amail-config__section' },
             h('h4', { className: 'amail-config__legend' }, t('routing')),
-            h(TextField, {
-              id: 'amail-fallback',
-              label: t('fallbackLabel'),
-              hint: t('fallbackHint'),
-              extraHint: t('fallbackFind'),
-              placeholder: t('fallbackPlaceholder'),
-              value: String(current('fallbackSessionId') ?? ''),
-              disabled,
-              onChange: (next) => edit('fallbackSessionId', next),
-            }),
+            h('div', { className: 'amail-field' },
+              h('label', { className: 'amail-field__label', htmlFor: 'amail-fallback' }, t('fallbackLabel')),
+              h('select', {
+                id: 'amail-fallback',
+                className: 'amail-select',
+                value: fallbackId,
+                disabled,
+                onChange: (event) => edit('fallbackSessionId', event.target.value),
+              },
+                h('option', { value: '' }, t('fallbackNone')),
+                fallbackChoices.map((choice) => h('option', { key: choice.id, value: choice.id }, choice.label)),
+              ),
+              h('p', { className: 'amail-field__hint' }, t('fallbackHint')),
+              fallbackId
+                ? h('p', { className: 'amail-field__meta' }, t('fallbackCurrent'), h('code', null, fallbackId))
+                : null,
+            ),
             h('div', { className: 'amail-field' },
               h('label', { className: 'amail-field__label', htmlFor: 'amail-senders' }, t('filterLabel')),
               h('textarea', {

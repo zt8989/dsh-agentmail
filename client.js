@@ -376,8 +376,11 @@ window.__ModuleLoader__.load({
       const intervalInvalid = intervalText.trim() !== '' && !/^\d+$/.test(intervalText.trim())
       const fallbackId = String(current('fallbackSessionId') ?? '')
       const fallbackChoices = sessionChoices(sessionsById, fallbackId, t)
-      const senders = Array.isArray(current('routeOnlyFrom')) ? current('routeOnlyFrom') : []
-      const sendersText = senders.join('\n')
+      // Staged text lives as typed; the Host value is the split array.
+      const stagedSenders = current('routeOnlyFrom')
+      const sendersText = typeof stagedSenders === 'string'
+        ? stagedSenders
+        : Array.isArray(stagedSenders) ? stagedSenders.join('\n') : ''
       const markRead = current('markRead') !== false
 
       const save = async () => {

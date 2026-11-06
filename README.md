@@ -27,8 +27,9 @@ Its settings are edited on a configuration page in the Web UI.
 - **Configuration page** — **Settings → Agent Mail** is a full settings page;
   the same page is also the **Configure** control on the **Plugins → Agent
   Mail** row, and both edit one namespace (fallback Session, sender filter,
-  delivery, polling, connection). The fallback Session is a **dropdown of known
-  sessions**, so no id has to be copied by hand. Edits are staged and written on
+  delivery, polling, connection). The fallback Session comes from a **searchable list of
+  known sessions** (type to filter by title or id), so no id has to be copied by
+  hand. Edits are staged and written on
   **Save**, so no manual `cordis.patch.yml` editing is needed for normal use.
 - **HTML -> markdown** — QQ/Foxmail HTML bodies are rendered down to compact
   markdown (`html.js`, turndown-based): signature/report blocks

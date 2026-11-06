@@ -31,6 +31,8 @@ window.__ModuleLoader__.load({
       fallbackLabel: 'Fallback Session for unknown conversations',
       fallbackHint: 'Mail whose conversation matches no live Session is delivered to this Session: any Session this client lists, running or closed. Pick none to ignore such mail.',
       fallbackNone: 'None — ignore unknown conversations',
+      searchSessions: 'Search sessions',
+      noMatch: 'No session matches.',
       fallbackMissing: '(not in this client’s Session list)',
       fallbackCurrent: 'Session id:',
       running: 'running',
@@ -67,6 +69,8 @@ window.__ModuleLoader__.load({
       fallbackLabel: '未知会话的兜底 Session',
       fallbackHint: '来信的会话匹配不到任何活动会话时，投递到选中的 Session；列表里是当前客户端已知的会话，运行中的会在后面标出。选“不指定”则忽略这类来信。',
       fallbackNone: '不指定（忽略未知会话的来信）',
+      searchSessions: '搜索会话',
+      noMatch: '没有匹配的会话。',
       fallbackMissing: '（不在当前会话列表中）',
       fallbackCurrent: '会话 ID：',
       running: '运行中',
@@ -106,9 +110,23 @@ window.__ModuleLoader__.load({
       .amail-field__label { font-size: 13px; line-height: 20px; }
       .amail-field__hint { color: var(--dsw-alias-label-secondary); margin: 0; font-size: 12px; line-height: 18px; }
       .amail-field__error { color: var(--dsw-alias-state-error-primary); margin: 0; font-size: 12px; line-height: 18px; }
-      .amail-select { box-sizing: border-box; width: 100%; height: 36px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; padding: 0 10px; outline: none; }
-      .amail-select:focus { border-color: var(--dsw-alias-brand-primary); box-shadow: inset 0 0 0 .5px var(--dsw-alias-brand-primary); }
-      .amail-select:disabled { opacity: .6; cursor: default; }
+      .amail-picker { position: relative; }
+      .amail-picker__trigger { box-sizing: border-box; width: 100%; height: 36px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; padding: 0 10px; outline: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; cursor: pointer; }
+      .amail-picker__trigger:focus-visible, .amail-picker__trigger[aria-expanded='true'] { border-color: var(--dsw-alias-brand-primary); box-shadow: inset 0 0 0 .5px var(--dsw-alias-brand-primary); }
+      .amail-picker__trigger:disabled { opacity: .6; cursor: default; }
+      .amail-picker__value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .amail-picker__value--none { color: var(--dsw-alias-label-secondary); }
+      .amail-picker__chev { flex: none; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); font-size: 10px; }
+      .amail-picker__pop { position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 6px); box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; padding: 6px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-2); box-shadow: 0 10px 30px rgb(0 0 0 / 18%); }
+      .amail-picker__search { box-sizing: border-box; width: 100%; height: 32px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-bg-layer-1, transparent); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; padding: 0 10px; outline: none; }
+      .amail-picker__search:focus { border-color: var(--dsw-alias-brand-primary); }
+      .amail-picker__list { margin: 0; padding: 0; list-style: none; max-height: 232px; overflow: auto; }
+      .amail-picker__option { display: flex; flex-direction: column; gap: 2px; padding: 7px 8px; border-radius: var(--dsw-radius-sm, 6px); cursor: pointer; }
+      .amail-picker__option[data-active='true'], .amail-picker__option:hover { background: var(--dsw-alias-bg-layer-3, rgb(127 127 127 / 12%)); }
+      .amail-picker__option[aria-selected='true'] { color: var(--dsw-alias-brand-primary); }
+      .amail-picker__option-title { font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+      .amail-picker__option-meta { color: var(--dsw-alias-label-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
+      .amail-picker__empty { padding: 10px 8px; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; }
       .amail-field__meta { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; }
       .amail-field__meta code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
       .amail-input, .amail-textarea { box-sizing: border-box; width: 100%; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; outline: none; padding: 0 12px; }
@@ -145,7 +163,7 @@ window.__ModuleLoader__.load({
      * @param {object} byId session snapshot by id.
      * @param {string} selected configured session id.
      * @param {(key: string) => string} t translator.
-     * @returns {{ id: string, label: string }[]} select options.
+     * @returns {{ id: string, label: string, meta: string }[]} picker rows.
      */
     function sessionChoices(byId, selected, t) {
       const rows = byId !== null && typeof byId === 'object' ? Object.values(byId) : []
@@ -165,7 +183,131 @@ window.__ModuleLoader__.load({
       return choices.map((choice) => ({
         id: choice.id,
         label: choice.running ? `${choice.label} · ${t('running')}` : choice.label,
+        meta: choice.label === choice.id ? '' : choice.id,
       }))
+    }
+
+    /**
+     * Rows the picker shows for a query: every session whose title or id
+     * contains the text, and the "no fallback" row only while the search is empty.
+     * @param {{ id: string, label: string, meta?: string }[]} choices known sessions.
+     * @param {string} query raw search text.
+     * @param {string} noneLabel label of the clearing row.
+     * @returns {{ id: string, label: string, meta?: string }[]} visible rows.
+     */
+    function filterChoices(choices, query, noneLabel) {
+      const needle = String(query || '').trim().toLowerCase()
+      if (needle === '') return [{ id: '', label: noneLabel }, ...choices]
+      return choices.filter((choice) => `${choice.label} ${choice.id}`.toLowerCase().includes(needle))
+    }
+
+    /**
+     * A session picker with a search box: a native select cannot be typed into,
+     * and this list grows with every Session the client knows.
+     * @param {object} props picker inputs.
+     * @returns {object} the picker element.
+     */
+    function SessionPicker(props) {
+      const { id, value, choices, noneLabel, searchLabel, noMatchLabel, disabled, onChange } = props
+      const openState = React.useState(false)
+      const queryState = React.useState('')
+      const activeState = React.useState(-1)
+      const open = openState[0]
+      const query = queryState[0]
+      const active = activeState[0]
+      const setOpen = openState[1]
+      const setQuery = queryState[1]
+      const setActive = activeState[1]
+      const box = React.useRef(null)
+      const search = React.useRef(null)
+
+      const selected = choices.find((choice) => choice.id === value)
+      const shown = value === '' ? noneLabel : selected ? selected.label : value
+      const rows = filterChoices(choices, query, noneLabel)
+
+      React.useEffect(() => {
+        if (!open) return undefined
+        if (search.current && typeof search.current.focus === 'function') search.current.focus()
+        const onDown = (event) => {
+          if (box.current && typeof box.current.contains === 'function' && box.current.contains(event.target)) return
+          setOpen(false)
+        }
+        if (typeof document !== 'undefined') document.addEventListener('mousedown', onDown)
+        return () => { if (typeof document !== 'undefined') document.removeEventListener('mousedown', onDown) }
+      }, [open, setOpen])
+
+      const close = () => { setOpen(false); setQuery(''); setActive(-1) }
+      const choose = (next) => { onChange(next); close() }
+      const onSearchKeyDown = (event) => {
+        const key = event && event.key
+        if (key === 'ArrowDown') {
+          event.preventDefault()
+          setActive(Math.min(active + 1, rows.length - 1))
+        } else if (key === 'ArrowUp') {
+          event.preventDefault()
+          setActive(Math.max(active - 1, 0))
+        } else if (key === 'Enter') {
+          event.preventDefault()
+          const row = rows[active >= 0 ? active : 0]
+          if (row) choose(row.id)
+        } else if (key === 'Escape') {
+          event.preventDefault()
+          close()
+        }
+      }
+
+      return h('div', { className: 'amail-picker', ref: box },
+        h('button', {
+          id,
+          type: 'button',
+          className: 'amail-picker__trigger',
+          disabled,
+          'aria-haspopup': 'listbox',
+          'aria-expanded': open ? 'true' : 'false',
+          onClick: () => {
+            if (open) close()
+            else { setOpen(true); setQuery(''); setActive(-1) }
+          },
+        },
+          h('span', { className: value === '' ? 'amail-picker__value amail-picker__value--none' : 'amail-picker__value' }, shown),
+          h('span', { className: 'amail-picker__chev', 'aria-hidden': 'true' }, '▾'),
+        ),
+        open
+          ? h('div', { className: 'amail-picker__pop' },
+            h('input', {
+              id: `${id}-search`,
+              ref: search,
+              className: 'amail-picker__search',
+              type: 'text',
+              autoComplete: 'off',
+              spellCheck: false,
+              placeholder: searchLabel,
+              'aria-label': searchLabel,
+              'aria-controls': `${id}-list`,
+              value: query,
+              onChange: (event) => { setQuery(event.target.value); setActive(-1) },
+              onKeyDown: onSearchKeyDown,
+            }),
+            h('ul', { id: `${id}-list`, className: 'amail-picker__list', role: 'listbox' },
+              rows.length === 0
+                ? h('li', { className: 'amail-picker__empty' }, noMatchLabel)
+                : rows.map((row, index) => h('li', {
+                  key: row.id || 'none',
+                  id: `${id}-option-${index}`,
+                  role: 'option',
+                  'data-value': row.id,
+                  'data-active': index === active ? 'true' : 'false',
+                  'aria-selected': row.id === value ? 'true' : 'false',
+                  className: 'amail-picker__option',
+                  onClick: () => choose(row.id),
+                },
+                  h('span', { className: 'amail-picker__option-title' }, row.label),
+                  row.meta ? h('span', { className: 'amail-picker__option-meta' }, row.meta) : null,
+                )),
+            ),
+          )
+          : null,
+      )
     }
 
     /** One labeled text input bound to a namespace field. */
@@ -301,16 +443,16 @@ window.__ModuleLoader__.load({
             h('h4', { className: 'amail-config__legend' }, t('routing')),
             h('div', { className: 'amail-field' },
               h('label', { className: 'amail-field__label', htmlFor: 'amail-fallback' }, t('fallbackLabel')),
-              h('select', {
+              h(SessionPicker, {
                 id: 'amail-fallback',
-                className: 'amail-select',
                 value: fallbackId,
+                choices: fallbackChoices,
+                noneLabel: t('fallbackNone'),
+                searchLabel: t('searchSessions'),
+                noMatchLabel: t('noMatch'),
                 disabled,
-                onChange: (event) => edit('fallbackSessionId', event.target.value),
-              },
-                h('option', { value: '' }, t('fallbackNone')),
-                fallbackChoices.map((choice) => h('option', { key: choice.id, value: choice.id }, choice.label)),
-              ),
+                onChange: (next) => edit('fallbackSessionId', next),
+              }),
               h('p', { className: 'amail-field__hint' }, t('fallbackHint')),
               fallbackId
                 ? h('p', { className: 'amail-field__meta' }, t('fallbackCurrent'), h('code', null, fallbackId))

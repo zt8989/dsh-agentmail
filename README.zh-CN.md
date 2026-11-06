@@ -22,8 +22,8 @@
   收件箱里被忽略。
 - **配置页** — **设置 → Agent 邮箱** 是一整页配置；同一个页面也挂在
   **Plugins → Agent Mail** 的插件行上（行上的**配置**入口），两处改的是同一份设置。
-  可设兜底会话、发件人过滤、投递、轮询与连接参数；兜底会话从**会话下拉列表**里选，
-  不用手抄会话 id。修改先暂存，点 **保存** 才写入，日常使用不必手改 `cordis.patch.yml`。
+  可设兜底会话、发件人过滤、投递、轮询与连接参数；兜底会话从**可搜索的会话列表**里选
+  （按标题或 id 过滤），不用手抄会话 id。修改先暂存，点 **保存** 才写入，日常使用不必手改 `cordis.patch.yml`。
 - **HTML → Markdown** — QQ/Foxmail 的 HTML 正文被渲染为紧凑的 Markdown
   （`html.js`，基于 turndown）：签名/报告块（`data-xmail_bot_mail_report`）整体移除，
   Foxmail 的 border-left/`mail_quote` 引用壳变成 `>` 引用，微小图标/追踪像素被丢弃，

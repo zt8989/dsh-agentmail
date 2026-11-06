@@ -1,9 +1,10 @@
-// Browser half: the Agent Mail configuration page on the Plugins page.
+// Browser half: the Agent Mail configuration page.
 //
-// The page is registered into `plugins.row.config` for the bundle's `agentmail`
-// row, so the plugin row gains a Configure control. The Host settings machinery
-// (the automatic Config form) hands the page its current values and the write
-// queue, and this module owns only the staged draft and the labels.
+// The page appears twice. Under Settings it is a `settings.section` page that
+// reads its values from the client `configForms` service; on the Plugins page it
+// is the `agentmail` row's `plugins.row.config` cell, which the plugin manager
+// hands a form directly. Both render the same component, and this module owns
+// only the staged draft and the labels.
 window.__ModuleLoader__.load({
   id: '@zt8989/dsh-agentmail',
   factory(require) {
@@ -14,9 +15,14 @@ window.__ModuleLoader__.load({
     const NS = 'agentmail'
     /** Slot cell key: `<package name>#<row id>` as the bundle patch declares it. */
     const ROW_KEY = '@zt8989/dsh-agentmail#agentmail'
+    /** Settings section id and nav label key. */
+    const SECTION_ID = 'agentmail'
+    /** Page shown before the settings mirror carries the namespace. */
+    const PENDING_FORM = Object.freeze({ status: 'loading' })
 
     const en = {
       summary: 'Routes replies back to their Session; unknown conversations go to a fallback Session or are ignored.',
+      sectionLabel: 'Agent Mail',
       routing: 'Routing',
       fallbackLabel: 'Fallback Session for unknown conversations',
       fallbackHint: 'Mail whose conversation matches no live Session is delivered to this Session: any Session this client lists, running or closed. Pick none to ignore such mail.',
@@ -52,6 +58,7 @@ window.__ModuleLoader__.load({
 
     const zh = {
       summary: '把回信路由回对应的会话；不认识的会话交给兜底会话，未配置则忽略。',
+      sectionLabel: 'Agent 邮箱',
       routing: '路由',
       fallbackLabel: '未知会话的兜底 Session',
       fallbackHint: '来信的会话匹配不到任何活动会话时，投递到选中的 Session；列表里是当前客户端已知的会话，运行中的会在后面标出。选“不指定”则忽略这类来信。',
@@ -400,10 +407,39 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * The Settings page. `settings.section` hands out no form, so the page reads
+     * the same namespace through the client `configForms` service the plugin
+     * manager itself uses; `formFor` supplies the cached controller.
+     */
+    function AgentMailSection(props) {
+      const form = props.formFor ? props.formFor() : undefined
+      const subscribe = React.useCallback(
+        (listener) => (form ? form.subscribe(listener) : () => {}),
+        [form],
+      )
+      const read = React.useCallback(
+        () => (form ? form.getSnapshot() : PENDING_FORM),
+        [form],
+      )
+      const state = React.useSyncExternalStore(subscribe, read)
+      const bound = form
+        ? { state, mutate: (ops, revision) => form.mutate(ops, revision) }
+        : undefined
+      return h(AgentMailConfig, { ...props, view: 'page', form: bound })
+    }
+
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
+        const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'agentmail: dictionaries')
+        ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section',
+          id: SECTION_ID,
+          order: 16,
+          label: () => t('sectionLabel'),
+        }, (props) => h(AgentMailSection, { ...props, t, formFor: () => { const forms = ctx.get('configForms'); return forms ? forms.get(NS) : undefined } })))
         ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
           name: 'plugins.row.config',
           key: ROW_KEY,

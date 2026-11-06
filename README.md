@@ -24,12 +24,12 @@ Its settings are edited on a configuration page in the Web UI.
   `agent.followup(...)` (waking the agent). A conversation that matches no live
   Session goes to the configured **fallback Session**; with no fallback the mail
   stays in the inbox and is ignored.
-- **Configuration page** — the plugin row on **Plugins → Agent Mail** gains a
-  **Configure** control that opens a settings page (fallback Session, sender
-  filter, delivery, polling, connection). The fallback Session is a **dropdown
-  of known sessions**, so no id has to be copied by hand. Edits are staged and
-  written on **Save**, so no manual `cordis.patch.yml` editing is needed for
-  normal use.
+- **Configuration page** — **Settings → Agent Mail** is a full settings page;
+  the same page is also the **Configure** control on the **Plugins → Agent
+  Mail** row, and both edit one namespace (fallback Session, sender filter,
+  delivery, polling, connection). The fallback Session is a **dropdown of known
+  sessions**, so no id has to be copied by hand. Edits are staged and written on
+  **Save**, so no manual `cordis.patch.yml` editing is needed for normal use.
 - **HTML -> markdown** — QQ/Foxmail HTML bodies are rendered down to compact
   markdown (`html.js`, turndown-based): signature/report blocks
   (`data-xmail_bot_mail_report`) are removed, Foxmail's border-left/`mail_quote`

@@ -11,8 +11,10 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
 
-    /** Settings namespace of the `agentmail` Loader row. */
+    /** Locale namespace; also the row id the bundle patch declares. */
     const NS = 'agentmail'
+    /** Settings namespace a bundle-inserted row gets: the Loader entry id. */
+    const ENTRY_NS = 'include:agentmail'
     /** Slot cell key: `<package name>#<row id>` as the bundle patch declares it. */
     const ROW_KEY = '@zt8989/dsh-agentmail#agentmail'
     /** Settings section id and nav label key. */
@@ -408,12 +410,42 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The settings namespace that belongs to this plugin, as the Host names it:
+     * the Loader entry id (`include:agentmail`) in the shipped profile.
+     * @param {object} view the settings describe view.
+     * @returns {string | undefined} the served namespace, or undefined.
+     */
+    function servedNamespace(view) {
+      const list = view !== null && typeof view === 'object' && Array.isArray(view.namespaces) ? view.namespaces : []
+      const names = list.map((entry) => (entry === null || typeof entry !== 'object' ? undefined : entry.ns))
+        .filter((ns) => typeof ns === 'string')
+      return names.find((ns) => ns === ENTRY_NS)
+        ?? names.find((ns) => ns === NS)
+        ?? names.find((ns) => ns.endsWith(`:${NS}`))
+    }
+
+    /**
      * The Settings page. `settings.section` hands out no form, so the page reads
      * the same namespace through the client `configForms` service the plugin
-     * manager itself uses; `formFor` supplies the cached controller.
+     * manager itself uses; `forms` supplies that service.
      */
     function AgentMailSection(props) {
-      const form = props.formFor ? props.formFor() : undefined
+      const forms = props.forms ? props.forms() : undefined
+      const mirror = forms ? forms.describe() : undefined
+      const subscribeMirror = React.useCallback(
+        (listener) => (mirror ? mirror.subscribe(listener) : () => {}),
+        [mirror],
+      )
+      const readMirror = React.useCallback(
+        () => (mirror ? mirror.getSnapshot() : undefined),
+        [mirror],
+      )
+      const describeView = React.useSyncExternalStore(subscribeMirror, readMirror)
+      React.useEffect(() => {
+        if (mirror) mirror.ensure()
+      }, [mirror])
+      const ns = servedNamespace(describeView && describeView.view)
+      const form = forms && ns !== undefined ? forms.get(ns) : undefined
       const subscribe = React.useCallback(
         (listener) => (form ? form.subscribe(listener) : () => {}),
         [form],
@@ -439,7 +471,7 @@ window.__ModuleLoader__.load({
           id: SECTION_ID,
           order: 16,
           label: () => t('sectionLabel'),
-        }, (props) => h(AgentMailSection, { ...props, t, formFor: () => { const forms = ctx.get('configForms'); return forms ? forms.get(NS) : undefined } })))
+        }, (props) => h(AgentMailSection, { ...props, t, forms: () => ctx.get('configForms') })))
         ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
           name: 'plugins.row.config',
           key: ROW_KEY,

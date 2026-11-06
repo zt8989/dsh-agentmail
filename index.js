@@ -44,7 +44,7 @@ export const Config = z.object({
   statePath: z.string().default('').description('Override the state file path.'),
   // Move routed messages out of the inbox so they are not routed again.
   markRead: z.boolean().default(true).description('Move routed messages to trash so they are not routed again.'),
-})
+}).volatile()
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -109,15 +109,14 @@ function asMissingCli(e) {
 function createCli(ctx, config) {
   // Base command: `launcher` (array) wins; else `cliPath` alone. On hosts where a
   // global install is blocked, set launcher to ["npx","--yes","@tencent-qqmail/agently-cli"].
-  const base = Array.isArray(config.launcher) && config.launcher.length > 0
-    ? config.launcher.map(String)
-    : [config.cliPath || 'agently-cli']
-  const exec = base[0]
-  const baseArgs = base.slice(1)
+  const baseArgv = () => {
+    const launcher = Array.isArray(config.launcher) ? config.launcher.filter((part) => String(part).length > 0) : []
+    return launcher.length > 0 ? launcher.map(String) : [config.cliPath || 'agently-cli']
+  }
   const cwd = ctx.get?.('workingDirectory')?.defaultDirectory || process.cwd()
 
   async function runCollect(argv, { timeoutMs = 60000 } = {}) {
-    const fullArgv = [exec, ...baseArgs, ...argv]
+    const fullArgv = [...baseArgv(), ...argv]
     const subprocess = ctx.get?.('subprocess')
     if (subprocess) {
       let handle
@@ -196,7 +195,7 @@ function createCli(ctx, config) {
     return json
   }
 
-  return { runCollect, runJson, exec }
+  return { runCollect, runJson, get exec() { return baseArgv()[0] } }
 }
 
 async function readReader(reader) {
@@ -236,13 +235,13 @@ async function readReaderComplete(reader, { attempts = 5, delayMs = 20 } = {}) {
 // ---------------------------------------------------------------------------
 
 function createStore(config) {
-  const file = config.statePath ? resolvePath(config.statePath) : join(dshHome(), 'agentmail', 'state.json')
+  const stateFile = () => (config.statePath ? resolvePath(config.statePath) : join(dshHome(), 'agentmail', 'state.json'))
   let data = { bindings: {}, seen: [], threads: {} }
   let saving = undefined
 
   async function load() {
     try {
-      const raw = await readFile(file, 'utf8')
+      const raw = await readFile(stateFile(), 'utf8')
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === 'object') {
         data = {
@@ -261,6 +260,7 @@ function createStore(config) {
     if (saving) return saving
     saving = (async () => {
       try {
+        const file = stateFile()
         await mkdir(dirname(file), { recursive: true })
         const tmp = `${file}.tmp-${process.pid}`
         await writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
@@ -276,7 +276,7 @@ function createStore(config) {
 
   const keyOf = (session, thread) => `${session}::${thread}`
   return {
-    file,
+    get file() { return stateFile() },
     load,
     save,
     data,
@@ -298,9 +298,9 @@ function createStore(config) {
 // ---------------------------------------------------------------------------
 
 export function apply(ctx, rawConfig = {}) {
-  // Cordis validates against the exported Schemastery Config and fills defaults;
-  // the plain fallback keeps direct/test calls working.
-  const config = { ...CONFIG_DEFAULTS, ...(rawConfig || {}) }
+  // Cordis validates against the exported Schemastery Config and fills defaults.
+  // The schema is volatile, so this object reflects live edits; never copy it.
+  const config = rawConfig || {}
   const store = createStore(config)
   const cli = createCli(ctx, config)
   let ready = store.load()
@@ -447,7 +447,8 @@ export function apply(ctx, rawConfig = {}) {
     const subject = message.subject || ''
     const marker = parseMarker(subject) || parseMarker(message.snippet)
     const from = message.from?.email || message.from?.name || ''
-    if (config.routeOnlyFrom.length > 0 && !config.routeOnlyFrom.includes(from)) return { routed: false, reason: 'sender filtered' }
+    const senders = Array.isArray(config.routeOnlyFrom) ? config.routeOnlyFrom : []
+    if (senders.length > 0 && !senders.includes(from)) return { routed: false, reason: 'sender filtered' }
     // Echo guard: our own outgoing mail (e.g. sending to yourself) can loop back as
     // incoming and would otherwise re-inject into the same Session. Skip it.
     const selfAddr = await self()
@@ -543,7 +544,7 @@ export function apply(ctx, rawConfig = {}) {
         // Session later lets the next poll pick it up.
         if (r.routed || r.reason === 'from self (echo)') store.markSeen(msg.message_id)
         results.push({ id: msg.message_id, ...r })
-        if (r.routed && config.markRead) {
+        if (r.routed && config.markRead !== false) {
           // Move out of the inbox so it is not listed as unread again.
           try { await cli.runJson(['message', '+trash', '--id', msg.message_id]) } catch (e) { log('trash failed:', e?.message || e) }
         }
@@ -568,21 +569,27 @@ export function apply(ctx, rawConfig = {}) {
     },
   })))
 
-  // Background interval poller.
-  const intervalMs = Number(config.pollIntervalMs) || 0
-  if (intervalMs > 0) {
-    ctx.effect(() => {
-      let stopped = false
-      let timer
-      const tick = async () => {
-        if (stopped) return
-        try { await pollOnce() } catch (e) { log('poll failed:', e?.message || e) }
-        if (!stopped) timer = setTimeout(tick, intervalMs)
-      }
-      timer = setTimeout(tick, Math.min(intervalMs, 5000))
-      return () => { stopped = true; if (timer) clearTimeout(timer) }
-    })
-  }
+  // Background poller. The interval comes from the live config each cycle, so a
+  // settings edit re-arms it without remounting the plugin.
+  const intervalMs = () => Number(config.pollIntervalMs ?? CONFIG_DEFAULTS.pollIntervalMs) || 0
+  ctx.effect(() => {
+    let stopped = false
+    let timer
+    const tick = async () => {
+      if (stopped) return
+      try { await pollOnce() } catch (e) { log('poll failed:', e?.message || e) }
+      schedule()
+    }
+    const schedule = (immediate = false) => {
+      if (stopped) return
+      if (timer) clearTimeout(timer)
+      const ms = intervalMs()
+      timer = ms <= 0 ? undefined : setTimeout(tick, immediate ? Math.min(ms, 5000) : ms)
+    }
+    schedule(true)
+    ctx.on('loader/volatile-update', () => schedule())
+    return () => { stopped = true; if (timer) clearTimeout(timer) }
+  })
 
   // System prompt: tell the agent the mail tools exist and the marker rule.
   const sp = ctx.get?.('systemPrompt')
@@ -594,7 +601,7 @@ export function apply(ctx, rawConfig = {}) {
     }))
   }
 
-  log('Agent Mail ready (poll every', intervalMs ? `${Math.round(intervalMs / 1000)}s` : 'never',
+  log('Agent Mail ready (poll every', intervalMs() ? `${Math.round(intervalMs() / 1000)}s` : 'never',
     config.fallbackSessionId ? `, fallback ${config.fallbackSessionId}` : ', unknown mail ignored', ')')
   return { pollOnce }
 }

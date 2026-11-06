@@ -21,6 +21,8 @@ window.__ModuleLoader__.load({
     const SECTION_ID = 'agentmail'
     /** Page shown before the settings mirror carries the namespace. */
     const PENDING_FORM = Object.freeze({ status: 'loading' })
+    /** Page shown when the mirror answered without a namespace for this plugin. */
+    const MISSING_FORM = Object.freeze({ status: 'unavailable' })
 
     const en = {
       summary: 'Routes replies back to their Session; unknown conversations go to a fallback Session or are ignored.',
@@ -446,13 +448,14 @@ window.__ModuleLoader__.load({
       }, [mirror])
       const ns = servedNamespace(describeView && describeView.view)
       const form = forms && ns !== undefined ? forms.get(ns) : undefined
+      const answered = describeView !== undefined && describeView.status !== 'loading'
       const subscribe = React.useCallback(
         (listener) => (form ? form.subscribe(listener) : () => {}),
         [form],
       )
       const read = React.useCallback(
-        () => (form ? form.getSnapshot() : PENDING_FORM),
-        [form],
+        () => (form ? form.getSnapshot() : answered ? MISSING_FORM : PENDING_FORM),
+        [form, answered],
       )
       const state = React.useSyncExternalStore(subscribe, read)
       const bound = form

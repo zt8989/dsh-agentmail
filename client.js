@@ -138,7 +138,8 @@ window.__ModuleLoader__.load({
       .amail-check input { width: 16px; height: 16px; margin: 2px 0 0; flex: none; accent-color: var(--dsw-alias-brand-primary); }
       .amail-check__text { display: flex; flex-direction: column; gap: 2px; }
       .amail-footer { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-top: .5px solid var(--dsw-alias-border-l1); padding-top: 14px; }
-      .amail-footer__status { flex: 1; min-width: 0; margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+      .amail-footer__status { min-width: 0; margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+      .amail-footer__actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
       .amail-btn { border-radius: var(--dsw-radius-md, 8px); height: 32px; padding: 0 14px; font: inherit; font-size: 13px; line-height: 20px; cursor: pointer; border: .5px solid var(--dsw-alias-border-l2); background: transparent; color: var(--dsw-alias-label-primary); }
       .amail-btn:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2); }
       .amail-btn:disabled { opacity: .5; cursor: default; }
@@ -539,18 +540,20 @@ window.__ModuleLoader__.load({
 
           h('div', { className: 'amail-footer' },
             status,
-            h('button', {
-              type: 'button',
-              className: 'amail-btn',
-              disabled: !dirty || busy,
-              onClick: reset,
-            }, t('discard')),
-            h('button', {
-              type: 'button',
-              className: 'amail-btn amail-btn--primary',
-              disabled: disabled || !dirty || intervalInvalid,
-              onClick: save,
-            }, busy ? t('saving') : t('save')),
+            h('div', { className: 'amail-footer__actions' },
+              h('button', {
+                type: 'button',
+                className: 'amail-btn',
+                disabled: !dirty || busy,
+                onClick: reset,
+              }, t('discard')),
+              h('button', {
+                type: 'button',
+                className: 'amail-btn amail-btn--primary',
+                disabled: disabled || !dirty || intervalInvalid,
+                onClick: save,
+              }, busy ? t('saving') : t('save')),
+            ),
           ),
         ),
       )

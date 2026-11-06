@@ -106,10 +106,11 @@ function asMissingCli(e) {
  * the JSON line(s) it prints to stdout. Uses ctx.subprocess when available
  * (collect mode) and falls back to node:child_process otherwise.
  */
-function createCli(ctx, config) {
+function createCli(ctx, settings) {
   // Base command: `launcher` (array) wins; else `cliPath` alone. On hosts where a
   // global install is blocked, set launcher to ["npx","--yes","@tencent-qqmail/agently-cli"].
   const baseArgv = () => {
+    const config = settings()
     const launcher = Array.isArray(config.launcher) ? config.launcher.filter((part) => String(part).length > 0) : []
     return launcher.length > 0 ? launcher.map(String) : [config.cliPath || 'agently-cli']
   }
@@ -234,8 +235,11 @@ async function readReaderComplete(reader, { attempts = 5, delayMs = 20 } = {}) {
 // State store (bindings + seen ids), JSON on disk
 // ---------------------------------------------------------------------------
 
-function createStore(config) {
-  const stateFile = () => (config.statePath ? resolvePath(config.statePath) : join(dshHome(), 'agentmail', 'state.json'))
+function createStore(settings) {
+  const stateFile = () => {
+    const config = settings()
+    return config.statePath ? resolvePath(config.statePath) : join(dshHome(), 'agentmail', 'state.json')
+  }
   let data = { bindings: {}, seen: [], threads: {} }
   let saving = undefined
 
@@ -300,9 +304,13 @@ function createStore(config) {
 export function apply(ctx, rawConfig = {}) {
   // Cordis validates against the exported Schemastery Config and fills defaults.
   // The schema is volatile, so this object reflects live edits; never copy it.
+  // A volatile Config reaches the plugin as a live reference: `.get()` is the
+  // current values (root-level volatile wraps the whole object), and a plain
+  // object arrives when the schema is not volatile (direct/test calls).
   const config = rawConfig || {}
-  const store = createStore(config)
-  const cli = createCli(ctx, config)
+  const settings = () => (typeof config?.get === 'function' ? config.get() : config)
+  const store = createStore(settings)
+  const cli = createCli(ctx, settings)
   let ready = store.load()
 
   // Discover our own mailbox address once (used in send receipts, headers).
@@ -447,7 +455,7 @@ export function apply(ctx, rawConfig = {}) {
     const subject = message.subject || ''
     const marker = parseMarker(subject) || parseMarker(message.snippet)
     const from = message.from?.email || message.from?.name || ''
-    const senders = Array.isArray(config.routeOnlyFrom) ? config.routeOnlyFrom : []
+    const senders = Array.isArray(settings().routeOnlyFrom) ? settings().routeOnlyFrom : []
     if (senders.length > 0 && !senders.includes(from)) return { routed: false, reason: 'sender filtered' }
     // Echo guard: our own outgoing mail (e.g. sending to yourself) can loop back as
     // incoming and would otherwise re-inject into the same Session. Skip it.
@@ -499,7 +507,7 @@ export function apply(ctx, rawConfig = {}) {
         if (agent) return { agent, sessionId: marker.session, source: 'marker' }
       }
     }
-    const fallbackId = String(config.fallbackSessionId || '').trim()
+    const fallbackId = String(settings().fallbackSessionId || '').trim()
     if (!fallbackId) {
       return { reason: marker ? 'unknown conversation (no fallback session)' : 'unmarked mail (no fallback session)' }
     }
@@ -544,7 +552,7 @@ export function apply(ctx, rawConfig = {}) {
         // Session later lets the next poll pick it up.
         if (r.routed || r.reason === 'from self (echo)') store.markSeen(msg.message_id)
         results.push({ id: msg.message_id, ...r })
-        if (r.routed && config.markRead !== false) {
+        if (r.routed && settings().markRead !== false) {
           // Move out of the inbox so it is not listed as unread again.
           try { await cli.runJson(['message', '+trash', '--id', msg.message_id]) } catch (e) { log('trash failed:', e?.message || e) }
         }
@@ -571,7 +579,7 @@ export function apply(ctx, rawConfig = {}) {
 
   // Background poller. The interval comes from the live config each cycle, so a
   // settings edit re-arms it without remounting the plugin.
-  const intervalMs = () => Number(config.pollIntervalMs ?? CONFIG_DEFAULTS.pollIntervalMs) || 0
+  const intervalMs = () => Number(settings().pollIntervalMs ?? CONFIG_DEFAULTS.pollIntervalMs) || 0
   ctx.effect(() => {
     let stopped = false
     let timer
@@ -602,7 +610,7 @@ export function apply(ctx, rawConfig = {}) {
   }
 
   log('Agent Mail ready (poll every', intervalMs() ? `${Math.round(intervalMs() / 1000)}s` : 'never',
-    config.fallbackSessionId ? `, fallback ${config.fallbackSessionId}` : ', unknown mail ignored', ')')
+    settings().fallbackSessionId ? `, fallback ${settings().fallbackSessionId}` : ', unknown mail ignored', ')')
   return { pollOnce }
 }
 

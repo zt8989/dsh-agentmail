@@ -13,7 +13,7 @@
 //
 // State (session/thread -> DSH session bindings, seen message ids) lives in a
 // JSON file next to the profile's DSH_HOME, so it survives restarts.
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, rename, stat as statFile } from 'node:fs/promises'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -52,6 +52,54 @@ export const Config = z.object({
 
 function dshHome() {
   return process.env.DSH_HOME || join(homedir(), '.dsh')
+}
+
+// DS Bot roster index: maps every session id that belongs to a group chat
+// (canonical id, room id, member sessions, archived segments) to the room's
+// canonical info. Read-only; the cache is keyed on the file's mtime+size.
+function createRoomIndex() {
+  let cache
+  const statePath = () => join(dshHome(), 'bot', 'state.json')
+  return async function roomsBySession() {
+    const file = statePath()
+    let stat
+    try {
+      stat = await statFile(file)
+    } catch {
+      return cache ? cache.map : new Map()
+    }
+    const stamp = `${stat.mtimeMs}:${stat.size}`
+    if (cache && cache.stamp === stamp) return cache.map
+    let parsed
+    try {
+      parsed = JSON.parse(await readFile(file, 'utf8'))
+    } catch {
+      return cache ? cache.map : new Map()
+    }
+    const map = new Map()
+    const rooms = parsed && parsed.rooms && typeof parsed.rooms === 'object' ? parsed.rooms : {}
+    for (const room of Object.values(rooms)) {
+      if (!room || typeof room !== 'object') continue
+      const canonical = String(room.sessionId ?? room.id ?? '').trim()
+      if (!canonical) continue
+      const info = { roomId: room.id, name: room.name, sessionId: canonical }
+      map.set(canonical, info)
+      if (room.id) map.set(String(room.id), info)
+      for (const part of Array.isArray(room.parts) ? room.parts : []) {
+        if (part?.sessionId) map.set(String(part.sessionId), info)
+      }
+      if (room.sessions && typeof room.sessions === 'object') {
+        for (const sid of Object.values(room.sessions)) if (sid) map.set(String(sid), info)
+      }
+      if (room.segments && typeof room.segments === 'object') {
+        for (const segs of Object.values(room.segments)) {
+          for (const seg of Array.isArray(segs) ? segs : []) if (seg?.sessionId) map.set(String(seg.sessionId), info)
+        }
+      }
+    }
+    cache = { stamp, map }
+    return map
+  }
 }
 
 function log(...args) {
@@ -332,9 +380,11 @@ export function apply(ctx, rawConfig = {}) {
   const textOut = { schema: { type: 'string' }, render: (_a, v) => [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] }
   const out = () => textOut
 
+  const roomsBySession = createRoomIndex()
+
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'agentmail_send',
-    description: 'Send an email through the QQ Agent mailbox. `session` and `thread` identify the conversation so replies are routed back to it automatically (defaults: this Session id, and a thread slug you choose). Returns the message id and the marker used.',
+    description: 'Send an email through the QQ Agent mailbox. `session` and `thread` identify the conversation so replies are routed back to it automatically (defaults: this Session id, and a thread slug you choose). In a DS Bot group chat the marker uses the group chat\'s own Session, so replies return to the group instead of one member. Returns the message id and the marker used.',
     parameters: {
       to: { type: 'array', items: { type: 'string' }, required: true, description: 'Recipient email address(es).' },
       subject: { type: 'string', required: true, description: 'Email subject. The session/thread marker is appended automatically unless already present.' },
@@ -347,8 +397,17 @@ export function apply(ctx, rawConfig = {}) {
     output: textOut,
     async execute(args, exec) {
       await ready
-      const session = String(args.session || exec.agent?.id || 'default').trim()
-      const thread = String(args.thread || slug(args.subject) || randomUUID().slice(0, 8)).trim()
+      let session = String(args.session || exec.agent?.id || 'default').trim()
+      let thread = String(args.thread || slug(args.subject) || randomUUID().slice(0, 8)).trim()
+      let group
+      try {
+        const rooms = await roomsBySession()
+        group = rooms.get(session)
+        if (group && group.sessionId) session = group.sessionId
+      } catch (e) {
+        log('room resolve failed:', e?.message || e)
+      }
+      if (group && !args.thread) thread = slug(group.name) || thread
       let subject = String(args.subject || '').trim()
       if (!MARKER_RE.test(subject)) subject = `${subject} ${buildMarker(session, thread)}`.trim()
       const argv = ['message', '+send', '--confirmed', '--subject', subject, '--body', String(args.body ?? '')]
@@ -357,9 +416,10 @@ export function apply(ctx, rawConfig = {}) {
       for (const b of args.bcc || []) argv.push('--bcc', String(b))
       const j = await cli.runJson(argv)
       // Confirm which binding this exchange belongs to.
-      store.setBinding(session, thread, { session, thread, updatedAt: Date.now(), lastDirection: 'out' })
+      store.setBinding(session, thread, { session, thread, updatedAt: Date.now(), lastDirection: 'out', ...group ? { roomId: group.roomId } : {} })
       const id = j.data?.message_id || j.message_id || ''
-      return `Sent. message_id=${id || '(queued)'}\nsubject: ${subject}\nmarker: ${buildMarker(session, thread)}\nthread: ${thread}  session: ${session}`
+      const groupLine = group ? `\ngroup: ${group.name} (${group.roomId}) — replies return to the group chat` : ''
+      return `Sent. message_id=${id || '(queued)'}\nsubject: ${subject}\nmarker: ${buildMarker(session, thread)}\nthread: ${thread}  session: ${session}${groupLine}`
     },
   })))
 
@@ -485,9 +545,9 @@ export function apply(ctx, rawConfig = {}) {
     // Only a thread that resolved to its own Session becomes a binding; fallback
     // deliveries stay one-off so a revived Session reclaims its thread.
     if (target.source !== 'fallback' && marker) {
-      store.setBinding(marker.session, marker.thread, { session: marker.session, thread: marker.thread, sessionId: target.sessionId, updatedAt: Date.now(), lastDirection: 'in' })
+      store.setBinding(marker.session, marker.thread, { session: marker.session, thread: marker.thread, sessionId: target.sessionId, updatedAt: Date.now(), lastDirection: 'in', ...target.group ? { roomId: target.group.roomId } : {} })
     }
-    return { routed: true, sessionId: target.sessionId, thread: marker?.thread, via: target.source }
+    return { routed: true, sessionId: target.sessionId, thread: marker?.thread, via: target.source, group: target.group?.name }
   }
 
   /**
@@ -500,11 +560,11 @@ export function apply(ctx, rawConfig = {}) {
       const binding = store.bindingOf(marker.session, marker.thread)
       if (binding?.sessionId) {
         const agent = await resolveAgentById(binding.sessionId)
-        if (agent) return { agent, sessionId: binding.sessionId, source: 'binding' }
+        if (agent) return { agent, sessionId: binding.sessionId, source: 'binding', group: await groupOf(binding.sessionId) }
       }
       if (looksLikeSessionId(marker.session)) {
         const agent = await resolveAgentById(marker.session)
-        if (agent) return { agent, sessionId: marker.session, source: 'marker' }
+        if (agent) return { agent, sessionId: marker.session, source: 'marker', group: await groupOf(marker.session) }
       }
     }
     const fallbackId = String(settings().fallbackSessionId || '').trim()
@@ -513,13 +573,27 @@ export function apply(ctx, rawConfig = {}) {
     }
     const agent = await resolveAgentById(fallbackId)
     if (!agent) return { reason: `fallback session ${fallbackId} is not available` }
-    return { agent, sessionId: fallbackId, source: 'fallback' }
+    return { agent, sessionId: fallbackId, source: 'fallback', group: await groupOf(fallbackId) }
+  }
+
+  async function groupOf(sessionId) {
+    try {
+      return (await roomsBySession()).get(String(sessionId || ''))
+    } catch {
+      return undefined
+    }
   }
 
   function deliveryText(target, { subject, from, bodyText, marker }) {
-    const head = target.source === 'fallback'
-      ? [`[Agent Mail · unknown conversation · from ${from}]`]
-      : [`[Agent Mail · thread "${marker?.thread ?? ''}" · from ${from}]`]
+    const group = target.group
+    let head
+    if (target.source === 'fallback') {
+      head = [`[Agent Mail · unknown conversation · from ${from}]`]
+    } else if (group) {
+      head = [`[Agent Mail · 群聊 "${group.name}" 收到一封邮件 · from ${from}]`]
+    } else {
+      head = [`[Agent Mail · thread "${marker?.thread ?? ''}" · from ${from}]`]
+    }
     if (target.source === 'fallback' && marker) head.push(`Marker: session=${marker.session} thread=${marker.thread} (no live Session)`)
     head.push(`Subject: ${normalizeSubject(subject)}`)
     return `${head.join('\n')}\n\n${bodyText}`
@@ -572,7 +646,7 @@ export function apply(ctx, rawConfig = {}) {
       const results = await pollOnce()
       if (results.length === 0) return 'No new mail to route.'
       return results.map((r) => r.routed
-        ? `routed ${r.id} -> session ${r.sessionId}${r.via === 'fallback' ? ' (fallback for an unknown conversation)' : ''}${r.thread ? ` (thread ${r.thread})` : ''}`
+        ? `routed ${r.id} -> session ${r.sessionId}${r.group ? ` (group chat "${r.group}")` : ''}${r.via === 'fallback' ? ' (fallback for an unknown conversation)' : ''}${r.thread ? ` (thread ${r.thread})` : ''}`
         : `skipped ${r.id}: ${r.reason}`).join('\n')
     },
   })))
@@ -605,7 +679,7 @@ export function apply(ctx, rawConfig = {}) {
     ctx.effect(() => sp.section({
       name: 'tool:agentmail',
       order: 120,
-      text: 'You can send and receive email through Agent Mail (agentmail_send / agentmail_list / agentmail_read / agentmail_search / agentmail_reply / agentmail_poll). When you send mail, a session/thread marker is embedded in the subject and replies are routed back into the conversation automatically; keep the resulting thread name stable for a topic. Mail whose conversation matches no live Session goes to the configured fallback Session, and is ignored when no fallback is configured.',
+      text: 'You can send and receive email through Agent Mail (agentmail_send / agentmail_list / agentmail_read / agentmail_search / agentmail_reply / agentmail_poll). When you send mail, a session/thread marker is embedded in the subject and replies are routed back into the conversation automatically; keep the resulting thread name stable for a topic. In a DS Bot group chat, the marker is raised from the group chat itself, so replies come back into the group (the whole group sees them), not into one member\'s private thread. Mail whose conversation matches no live Session goes to the configured fallback Session, and is ignored when no fallback is configured.',
     }))
   }
 

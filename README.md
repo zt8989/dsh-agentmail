@@ -112,6 +112,20 @@ the fallback is marked as an unknown conversation in the delivered text, and it
 does not create a thread binding: if that Session later comes back, its own
 threads route to it again.
 
+## Group chats (DS Bot)
+
+In a DS Bot **group chat**, each member Bot speaks from its own hidden group
+Session, not from the group's canonical Session. Sending mail from inside such a
+turn would otherwise raise the marker from that one member's Session, and replies
+would land in a private thread with that single Bot.
+
+This plugin reads DS Bot's roster (`<DSH_HOME>/bot/state.json`) read-only and, when
+the sending Session belongs to a group (canonical Session, a member's group
+Session, or an archived segment), puts the **group's canonical Session** in the
+marker instead. A reply then arrives as a message in the group chat: the whole
+group sees it and its admin/members decide how to answer — not a one-to-one thread
+with one Bot.
+
 ## Notes
 
 - Send/reply use `--confirmed` so mail is not blocked on an interactive
